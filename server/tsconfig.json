@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".", 
+    "paths": {
+      "@/*": ["./src/*"] 
+    },
+    "module": "esnext", // Change from commonjs to esnext for Next.js
+    "moduleResolution": "bundler", // Better for modern Next.js
+    "jsx": "preserve", // Required for Next.js
+    "lib": ["dom", "dom.iterable", "esnext"]
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules"]
+}
