@@ -20,11 +20,11 @@ export interface AuthResponse{
 
 export const authService={
     login: async(data:LoginData)=>{
-        const response= await apiClient.post<AuthResponse>('/auth/login', data);
+        const response= await apiClient.post<AuthResponse>('/login', data);
         return response.data;
     },
     register: async(data: RegisterData)=>{
-        const response= await apiClient.post<AuthResponse>('/auth/register', data);
+        const response= await apiClient.post<AuthResponse>('/register', data);
         return response.data;
     },
     logout: ()=>{

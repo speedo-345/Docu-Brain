@@ -32,11 +32,10 @@ export default function RegisterPage() {
      
       router.push('/upload')
     }catch(err: any){
-      setError(err.response?.data?.error || 'Login failed')
+      setError(err.response?.data?.error || 'Registration failed')
     }finally{
       setIsLoading(false);
     }
-  };
 
   return (
     <div className="relative min-h-screen w-full overflow-hidden flex items-center justify-center">
@@ -57,8 +56,8 @@ export default function RegisterPage() {
       <div className="relative z-10 w-full max-w-md px-4 sm:px-0">
         {/* Logo/Title Area */}
         <div className="mb-8 text-center">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-xl glass-glow mb-4">
-            <div className="text-white text-2xl font-bold">◆</div>
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-xl glass-glow mb-4 overflow-hidden">
+            <img src="/favicon.ico" alt="DocuBrain Logo" className="w-10 h-10 object-contain" />
           </div>
           <h1 className="text-4xl font-bold tracking-tight mb-2 text-white">
            Docu Brain
@@ -69,6 +68,12 @@ export default function RegisterPage() {
         {/* Form Card */}
         <div className="glass-glow p-8 rounded-xl space-y-6 animate-fadeInUp">
           <form onSubmit={handleRegister} className="space-y-5">
+            {error && (
+              <div className="bg-red-500/10 border border-red-500/50 text-red-500 text-sm p-3 rounded-lg text-center">
+                {error}
+              </div>
+            )}
+            
             {/* Username Field */}
             <div className="space-y-2">
               <label htmlFor="username" className="block text-sm font-medium text-foreground">
@@ -149,6 +154,14 @@ export default function RegisterPage() {
         
 
         {/* Footer Text */}
+        <div className="mt-6 text-center text-foreground-secondary">
+          <span>Already have an account? </span>
+          <Link
+            href="/" className="text-white hover:text-white/80 font-semibold transition-colors underline underline-offset-2">
+            Sign in
+          </Link>
+        </div>
+
         <p className="text-center text-foreground-tertiary text-xs mt-8">
           By signing in, you agree to our Terms of Service and Privacy Policy
         </p>

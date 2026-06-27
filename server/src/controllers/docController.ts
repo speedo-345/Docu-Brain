@@ -1,6 +1,6 @@
 import { Response, Request } from 'express';
-import { sendFileToAI, searchAI, deleteFileFromAI } from '../services/aiService';
-import { AuthRequest } from '@/middleware/authMiddleware';
+import { sendFileToAI, searchAI, deleteFileFromAI, getProcessingStatus } from '../services/aiService';
+import { AuthRequest } from '../middleware/authMiddleware';
 import Document from '../models/Document';
 import Message from '../models/Message';
 import fs from 'fs';
@@ -23,26 +23,125 @@ export const uploadDocument = async (req: AuthRequest, res: Response): Promise<v
 
         const filePath = req.file.path;
         const filename = req.file.filename;
+        const originalName = req.file.originalname || filename;
 
-        const aiResponse = await sendFileToAI(filePath, filename);
-
+        // ── ASYNC PIPELINE: Create doc immediately with 'processing' status ──
         const newDoc = await Document.create({
             userId: req.user._id,
             filename: filename,
+            originalName: originalName,
             fileUrl: filePath,
-
-            status: 'indexed'
+            status: 'processing'
         });
 
+        // Return immediately — the client can now redirect to the viewer
         res.json({
-            message: 'Processed successfully',
-            filename: filename,   // ← the actual saved filename on disk
-            data: aiResponse,
+            message: 'Uploading',
+            filename: filename,
+            originalName: originalName,
             docId: newDoc._id
         });
 
+        // ── Fire-and-forget: AI processing in background ──
+        sendFileToAI(filePath, filename, req.user._id.toString())
+          .then(async (aiResponse) => {
+              if (aiResponse && aiResponse.error) {
+                  console.error("AI processing returned error:", aiResponse.error);
+                  await Document.updateOne({ _id: newDoc._id }, { status: 'failed' });
+              } else {
+                  await Document.updateOne({ _id: newDoc._id }, { status: 'ready' });
+              }
+          })
+          .catch(async (err) => {
+              console.error("AI processing failed:", err);
+              await Document.updateOne({ _id: newDoc._id }, { status: 'failed' });
+          });
+
     } catch (error) {
+        console.error("Upload Error:", error);
+        
+        // Clean up the orphaned file if the AI processing fails
+        if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+            try {
+                fs.unlinkSync(req.file.path);
+            } catch (fsError) {
+                console.error("Failed to clean up file after upload error:", fsError);
+            }
+        }
+
         res.status(500).json({ error: 'Failed to process document' });
+    }
+};
+
+export const getDocumentStatus = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+        const { docId } = req.params;
+        const doc = await Document.findById(docId).select('status filename');
+        
+        if (!doc) {
+            res.status(404).json({ error: 'Document not found' });
+            return;
+        }
+
+        let stage = null;
+        // If still processing, poll the AI engine for granular stage info
+        if (doc.status === 'processing') {
+            try {
+                stage = await getProcessingStatus(doc.filename);
+            } catch {
+                // AI engine may be down — just return the MongoDB status
+            }
+        }
+
+        res.json({ status: doc.status, stage });
+    } catch (error) {
+        console.error("Status check error:", error);
+        res.status(500).json({ error: 'Failed to check status' });
+    }
+};
+
+export const retryDocument = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+        const { docId } = req.params;
+        const doc = await Document.findById(docId);
+        
+        if (!doc) {
+            res.status(404).json({ error: 'Document not found' });
+            return;
+        }
+
+        if (doc.status !== 'failed') {
+            res.status(400).json({ error: 'Only failed documents can be retried' });
+            return;
+        }
+
+        if (!doc.fileUrl || !fs.existsSync(doc.fileUrl)) {
+            res.status(400).json({ error: 'Original file no longer exists on server. Please re-upload.' });
+            return;
+        }
+
+        // Reset status
+        await Document.updateOne({ _id: docId }, { status: 'processing' });
+        res.json({ message: 'Retry started' });
+
+        // Fire-and-forget: AI processing in background
+        sendFileToAI(doc.fileUrl, doc.filename, req.user._id.toString())
+          .then(async (aiResponse) => {
+              if (aiResponse && aiResponse.error) {
+                  console.error("AI processing returned error on retry:", aiResponse.error);
+                  await Document.updateOne({ _id: docId }, { status: 'failed' });
+              } else {
+                  await Document.updateOne({ _id: docId }, { status: 'ready' });
+              }
+          })
+          .catch(async (err) => {
+              console.error("AI processing failed on retry:", err);
+              await Document.updateOne({ _id: docId }, { status: 'failed' });
+          });
+
+    } catch (error) {
+        console.error("Retry Error:", error);
+        res.status(500).json({ error: 'Failed to initiate retry' });
     }
 };
 
@@ -59,25 +158,48 @@ export const searchDocument = async (req: AuthRequest, res: Response): Promise<v
             return;
         }
 
-        await Message.create({
+        const doc = await Document.findById(docId);
+        if (!doc) {
+            res.status(404).json({ error: "Document not found" });
+            return;
+        }
+
+        const userMsg = await Message.create({
             documentId: docId,
             role: 'user',
             content: query,
-        })
+        });
         
-        const results = await searchAI(query.toString())
+        // Fetch last 6 messages (excluding the one we just created)
+        const recentMessages = await Message.find({ documentId: docId, role: { $ne: 'system' }, _id: { $ne: userMsg._id } })
+            .sort({ createdAt: -1 })
+            .limit(6)
+            .lean();
+            
+        const history = recentMessages.reverse().map(msg => ({
+            role: msg.role,
+            content: msg.content
+        }));
 
-        let aiResponseContent= "I couldn't find relevant info.";
-        let sources=[];
+        const searchData = await searchAI(query.toString(), doc.filename, req.user._id.toString(), history);
+
+        if (searchData && searchData.error) {
+            throw new Error(searchData.error);
+        }
+
+        const results = searchData.results || [];
+
+        let aiResponseContent= searchData.answer || "I couldn't find relevant info.";
+        let sources:any[]=[];
 
         //sources for db
         if(results && results.length>0){
-            aiResponseContent=results.map((r:any)=>r.text).join('\n\n');
 
             sources= results.map((r:any)=>({
                 textSnippet:r.text.substring(0, 100),
                 score: r.score,
-                pageNumber: r.pageNumber || 1 
+                pageNumber: typeof r.page === 'number' ? r.page : (!isNaN(parseInt(r.page)) ? parseInt(r.page) : 1),
+                filename: r.filename || null
             }));
         }
 
@@ -88,7 +210,10 @@ export const searchDocument = async (req: AuthRequest, res: Response): Promise<v
             sources: sources
         });
 
-        res.json(results);
+        res.json({
+            answer: aiResponseContent,
+            sources: sources
+        });
       
 
     } catch (error) {
@@ -122,7 +247,7 @@ export const getDocumentChat=async(req: AuthRequest, res: Response):Promise<void
             query.createdAt={$lt: new Date(before)};
         }
 
-        const messages= await Message.find({query}).sort({createdAt:-1}).limit(limit).lean();
+        const messages= await Message.find(query).sort({createdAt:-1}).limit(limit).lean();
 
         res.json(messages.reverse());
     }catch(error){
@@ -134,7 +259,7 @@ export const getUserDocuments= async(req: AuthRequest, res: Response)=>{
     try{
         const userId= req.user._id;
 
-        const docs= await Document.find({userId}).select('filename _id createdAt status')
+        const docs= await Document.find({userId}).select('filename originalName _id createdAt status')
         .sort({createdAt:-1});
 
         res.json(docs);
@@ -149,10 +274,10 @@ export const deleteDocument=async(req:AuthRequest, res: Response)=>{
     try{
        
 
-        const {id}=req.params;
+        const {docId}=req.params;
         const userId= req.user._id;
 
-        const docExist= await Document.findOne({_id: id, userId});
+        const docExist= await Document.findOne({_id: docId, userId});
 
 
         if (!docExist) {
@@ -160,14 +285,20 @@ export const deleteDocument=async(req:AuthRequest, res: Response)=>{
             return;
         }
 
+        // ── Delete file from disk ──
         if(docExist.fileUrl && fs.existsSync(docExist.fileUrl)){
             fs.unlinkSync(docExist.fileUrl);
         }
-        await deleteFileFromAI(docExist.filename);
 
-        await Message.deleteMany({docuemntId: id});
+        // ── Delete vectors from Pinecone (surface failures) ──
+        const aiDeleted = await deleteFileFromAI(docExist.filename);
+        if (aiDeleted === false) {
+            console.warn("⚠️ Pinecone vector cleanup failed — vectors may be orphaned for:", docExist.filename);
+        }
 
-        await Document.deleteOne({_id: id});
+        // ── Delete chat history and document record ──
+        await Message.deleteMany({documentId: docId});
+        await Document.deleteOne({_id: docId});
 
         res.json({ message: 'Document deleted successfully' });
         

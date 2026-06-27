@@ -2,7 +2,7 @@ import axios from 'axios';
 
 
 const apiClient = axios.create({
-    baseURL: "http://localhost:5000/api/docs",
+    baseURL: "http://localhost:5000/api",
     timeout: 300000, // 5 minutes — AI processing (parsing, embedding) can be slow
     headers:{
         'Content-Type':'application/json',

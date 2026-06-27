@@ -2,7 +2,8 @@ import mongoose, { Document, Model, Schema, Types } from 'mongoose';
 
 export interface IDocument extends Document {
     userId: Types.ObjectId; 
-    filename: string;
+    filename: string;       // Multer-generated disk filename (e.g., "1782421534322-563834334.pdf")
+    originalName: string;   // Human-readable original filename (e.g., "MyReport.pdf")
     fileUrl: string;
     status: 'pending' | 'processing' | 'ready' | 'failed';
     vectorId?: string; 
@@ -20,6 +21,11 @@ const DocumentSchema = new Schema<IDocument>({
     filename: {
         type: String,
         required: true,
+        trim: true
+    },
+    originalName: {
+        type: String,
+        required: false,
         trim: true
     },
     fileUrl: {

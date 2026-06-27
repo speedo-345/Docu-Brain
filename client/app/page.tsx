@@ -1,16 +1,32 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import Link from 'next/link';
 import { authService } from '@/services/authService';
+import {docsService} from '@/services/docsService';
 
-import { useRouter } from 'next/navigation';;
-
+import { useRouter } from 'next/navigation';
 
 
 export default function LoginPage() {
   const router = useRouter()
+  
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (token) {
+      // Check for existing documents — returning users go straight to viewer
+      docsService.getMyDocuments().then((docs: any[]) => {
+        if (docs.length > 0) {
+          const lastDoc = docs[0]; // sorted by createdAt desc
+          router.push(`/viewer?docId=${lastDoc._id}&file=${encodeURIComponent(lastDoc.filename)}`);
+        } else {
+          router.push('/upload');
+        }
+      }).catch(() => router.push('/upload'));
+    }
+  }, [router]);
+
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -18,9 +34,6 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
 
 
-  const toRegister = async (e: React.MouseEvent) => {
-    router.push('/register')
-  }
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,11 +41,18 @@ export default function LoginPage() {
     setError(null);
     try {
       const response = await authService.login({ email, password });
-
+      
       localStorage.setItem('token', response.token);
       localStorage.setItem('user', JSON.stringify(response));
+      let docs=await docsService.getMyDocuments();
+      if(docs.length==0){
+        router.push('/upload')
+      }
+      else{
+        const lastDoc = docs[0];
+        router.push(`/viewer?docId=${lastDoc._id}&file=${encodeURIComponent(lastDoc.filename)}`);
+      }
 
-      router.push('/upload')
     } catch (err: any) {
       setError(err.response?.data?.error || 'Login failed')
     } finally {
@@ -59,8 +79,8 @@ export default function LoginPage() {
       <div className="relative z-10 w-full max-w-md px-4 sm:px-0">
         {/* Logo/Title Area */}
         <div className="mb-8 text-center">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-xl glass-glow mb-4">
-            <div className="text-white text-2xl font-bold">◆</div>
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-xl glass-glow mb-4 overflow-hidden">
+            <img src="/favicon.ico" alt="DocuBrain Logo" className="w-10 h-10 object-contain" />
           </div>
           <h1 className="text-4xl font-bold tracking-tight mb-2 text-white">
             Docu Brain
@@ -71,6 +91,12 @@ export default function LoginPage() {
         {/* Form Card */}
         <div className="glass-glow p-8 rounded-xl space-y-6 animate-fadeInUp">
           <form onSubmit={handleLogin} className="space-y-5">
+            {error && (
+              <div className="bg-red-500/10 border border-red-500/50 text-red-500 text-sm p-3 rounded-lg text-center">
+                {error}
+              </div>
+            )}
+            
             {/* Email Field */}
             <div className="space-y-2">
               <label htmlFor="email" className="block text-sm font-medium text-foreground">
@@ -170,8 +196,7 @@ export default function LoginPage() {
         <div className="mt-6 text-center text-foreground-secondary">
           <span>Don&apos;t have an account? </span>
           <Link
-            onClick={toRegister}
-            href="#" className="text-white hover:text-white/80 font-semibold transition-colors underline underline-offset-2">
+            href="/register" className="text-white hover:text-white/80 font-semibold transition-colors underline underline-offset-2">
             Sign up
           </Link>
         </div>

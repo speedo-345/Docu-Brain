@@ -13,6 +13,7 @@ interface InfoPanelProps {
 interface DocItem {
   _id: string;
   filename: string;
+  originalName?: string;
   createdAt: string;
 }
 
@@ -32,6 +33,9 @@ export default function InfoPanel({
 
   useEffect(() => {
     loadLibrary();
+    const handler = () => loadLibrary();
+    window.addEventListener('refresh-library', handler);
+    return () => window.removeEventListener('refresh-library', handler);
   }, []);
 
   const loadLibrary = async () => {
@@ -47,23 +51,29 @@ export default function InfoPanel({
   };
 
   const handleDocClick = (doc: DocItem) => {
-    router.push(`/viewer?docId=${doc._id}&file=${encodeURIComponent(doc.filename)}`);
+    const name = doc.originalName || doc.filename;
+    router.push(`/viewer?docId=${doc._id}&file=${encodeURIComponent(doc.filename)}&name=${encodeURIComponent(name)}`);
+    // Force page-level state refresh in case docId didn't change (viewer was just closed)
+    window.dispatchEvent(new Event('reopen-viewer'));
   }
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (!confirm("Delet this document? Chat history will be lost.")) return;
+    if (!confirm("Delete this document? Chat history will be lost.")) return;
+    
+    // Optimistically remove the item from UI to prevent flicker
+    setDocuments(prev => prev.filter(doc => doc._id !== id));
+
     try {
-      setLoading(true);
       await docsService.deleteDocument(id);
-
-
-
-      loadLibrary();
+      
+      // Fetch fresh list quietly without turning on global loading spinner
+      const list = await docsService.getMyDocuments();
+      setDocuments(list);
     } catch (error) {
       alert("Failed to delete");
-    } finally {
-      setLoading(false);
+      // Revert if it fails
+      loadLibrary();
     }
   }
 
@@ -75,7 +85,7 @@ export default function InfoPanel({
   return (
     /* No border-radius — flush right edge for three-panel seam */
     <div
-      className="w-full lg:w-72 h-screen glass-dark border-l flex flex-col overflow-hidden"
+      className="w-full h-full glass-dark border-l flex flex-col overflow-hidden"
       style={{ borderColor: 'rgba(255, 255, 255, 0.08)', borderRadius: 0 }}
     >
       {/* Header */}
@@ -135,7 +145,7 @@ export default function InfoPanel({
                       <FileText size={16} className={currentDocId === doc._id ? "text-blue-400" : "text-gray-500"} />
                       <div className="min-w-0">
                         <p className={`text-sm truncate ${currentDocId === doc._id ? 'text-white' : 'text-gray-300'}`}>
-                          {doc.filename}
+                          {doc.originalName || doc.filename}
                         </p>
                         <p className="text-[10px] text-gray-600">
                           {new Date(doc.createdAt).toLocaleDateString()}

@@ -5,8 +5,11 @@ import { useState, useEffect, useRef } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 
 //1.COnfigyure the WOrker(Required for react-pdf to work)
+// Wrap the worker config so it ONLY runs in the browser, preventing server crashes.
 //We use the version matching the installed packages
-pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+if (typeof window !== 'undefined') {
+  pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+}
 
 //import default styles for text selection overlay
 import 'react-pdf/dist/Page/AnnotationLayer.css';
@@ -15,23 +18,26 @@ import { Input } from './ui/input';
 
 interface DocumentViewerProps {
   documentName?: string;
+  displayName?: string;
   onClose?: () => void;
   highlightPage?: number,
 }
 
-export default function DocumentViewer({ documentName, onClose, highlightPage }: DocumentViewerProps) {
+export default function DocumentViewer({ documentName, displayName, onClose, highlightPage }: DocumentViewerProps) {
 
 
   const containerRef = useRef<HTMLDivElement>(null);
 
-  if (!documentName) return null;
-  const extension = documentName.split('.').pop()?.toLowerCase() || '';
-  if (extension !== 'pdf') return null;
+  const extension = documentName?.split('.').pop()?.toLowerCase() || '';
 
   useEffect(() => {
     if (containerRef.current) {
       containerRef.current.scrollTop = 0;
     }
+    // Reset state for new document
+    setLoading(true);
+    setError(null);
+    setNumPages(null);
   }, [documentName]);
 
   useEffect(()=>{
@@ -52,6 +58,11 @@ export default function DocumentViewer({ documentName, onClose, highlightPage }:
   const [inputPage, setInputPage] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState<number | null>(null);
 
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
   useEffect(() => {
 
     if (loading || !numPages || !containerRef.current) return;
@@ -86,6 +97,11 @@ export default function DocumentViewer({ documentName, onClose, highlightPage }:
     };
 
   }, [numPages, loading]);
+
+  if (!isMounted) return null;
+  if (!documentName) return null;
+  if (extension !== 'pdf') return null;
+
 
 
 
@@ -132,7 +148,7 @@ export default function DocumentViewer({ documentName, onClose, highlightPage }:
             <FileText size={18} className="text-blue-400" />
           </div>
           <div>
-            <h2 className="text-sm font-semibold text-white truncate max-w-xs">{documentName}</h2>
+            <h2 className="text-sm font-semibold text-white truncate max-w-xs">{displayName || documentName}</h2>
             <p className="text-xs text-gray-400 uppercase tracking-widest">{extension} Document</p>
           </div>
         </div>

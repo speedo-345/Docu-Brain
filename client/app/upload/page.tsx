@@ -1,11 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { Upload, FileText, X, CheckCircle } from 'lucide-react';
+import { Upload, FileText, X, Loader } from 'lucide-react';
 import Link from 'next/link';
 import { docsService } from '@/services/docsService';
 import { useRouter } from 'next/navigation';
-import DocumentViewer from '@/components/DocumentViewer';
 
 
 export default function UploadPage() {
@@ -14,8 +13,7 @@ export default function UploadPage() {
 
   const [dragActive, setDragActive] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
+  const [isUploading, setIsUploading] = useState(false);
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -25,11 +23,6 @@ export default function UploadPage() {
     } else if (e.type === 'dragleave') {
       setDragActive(false);
     }
-  };
-
-  const preventDefault = (e: React.DragEvent | React.ChangeEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -47,59 +40,28 @@ export default function UploadPage() {
     }
   };
 
-  // const simulateUpload = () => {
-  //   setUploadStatus('uploading');
-  //   setUploadProgress(0);
-  //   const interval = setInterval(() => {
-  //     setUploadProgress((prev) => {
-  //       if (prev >= 100) {
-  //         clearInterval(interval);
-  //         setUploadStatus('success');
-  //         setTimeout(() => { window.location.href = '/viewer'; }, 1500);
-  //         return 100;
-  //       }
-  //       return prev + Math.random() * 30;
-  //     });
-  //   }, 300);
-  // };
-
   const handleUpload = async () => {
-    if (!selectedFile) return;
+    if (!selectedFile || isUploading) return;
 
-    setUploadStatus('uploading');
-    setUploadProgress(0);
+    setIsUploading(true);
 
     try {
-
-      const data = await docsService.uploadDocument(selectedFile, (percent) => {
-        setUploadProgress(percent);
-      });
-
-      console.log(data);
-      // Use the server-returned filename (the actual name saved on disk by multer)
-      // NOT selectedFile.name — that never matched the file on disk!
+      const data = await docsService.uploadDocument(selectedFile);
       const finalDocName = data.filename ?? selectedFile.name;
+      const displayName = data.originalName ?? selectedFile.name;
 
-      if(!data.docId){
-        console.error("Docuement Id is not found\n");
+      if (!data.docId) {
+        console.error("Document Id is not found\n");
+        setIsUploading(false);
+        alert("Upload failed — no document ID returned.");
         return;
-        setUploadStatus('error');
-        setUploadProgress(0);
       }
 
-
-      setUploadStatus('success');
-
-
-      setTimeout(() => {
-        router.push(`/viewer?docId=${data.docId}&file=${encodeURIComponent(finalDocName)}`);
-        // router.push('/viewer');
-      }, 1500);
+      // Go straight to the viewer — vectorization happens in background
+      router.push(`/viewer?docId=${data.docId}&file=${encodeURIComponent(finalDocName)}&name=${encodeURIComponent(displayName)}`);
 
     } catch (error) {
-
-      setUploadStatus('error');
-      setUploadProgress(0);
+      setIsUploading(false);
       console.error("Upload Error:", error);
       alert("Upload failed. Please try again.");
     }
@@ -107,8 +69,7 @@ export default function UploadPage() {
 
   const clearFile = () => {
     setSelectedFile(null);
-    setUploadProgress(0);
-    setUploadStatus('idle');
+    setIsUploading(false);
   };
 
   return (
@@ -193,7 +154,7 @@ export default function UploadPage() {
             </div>
           </div>
         ) : (
-          // File Selected / Upload Progress
+          // File Selected
           <div className="space-y-6 animate-fadeInUp">
             {/* File Card */}
             <div className="glass-glow p-6 rounded-xl flex items-center justify-between">
@@ -209,7 +170,7 @@ export default function UploadPage() {
                 </div>
               </div>
 
-              {uploadStatus === 'idle' && (
+              {!isUploading && (
                 <button
                   onClick={clearFile}
                   className="p-2 hover:glass rounded-lg text-foreground-secondary hover:text-foreground transition-all"
@@ -217,48 +178,10 @@ export default function UploadPage() {
                   <X size={20} />
                 </button>
               )}
-
-              {uploadStatus === 'success' && (
-                <div className="text-white">
-                  <CheckCircle size={28} />
-                </div>
-              )}
             </div>
 
-            {/* Upload Progress */}
-            {uploadStatus !== 'idle' && (
-              <div className="space-y-3">
-                <div className="glass p-4 rounded-lg">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-medium text-foreground">
-                      {uploadStatus === 'uploading' ? 'Uploading...' : 'Upload Complete!'}
-                    </span>
-                    <span className="text-sm text-foreground-secondary">
-                      {Math.min(Math.round(uploadProgress), 100)}%
-                    </span>
-                  </div>
-                  <div className="w-full h-1.5 rounded-full overflow-hidden bg-white/10">
-                    <div
-                      className="h-full bg-white rounded-full transition-all duration-300"
-                      style={{ width: `${Math.min(uploadProgress, 100)}%` }}
-                    />
-                  </div>
-                </div>
-
-                {uploadStatus === 'success' && (
-                  <div className="glass p-4 rounded-lg border border-white/20 flex items-center gap-3">
-                    <CheckCircle size={20} className="text-white flex-shrink-0" />
-                    <div>
-                      <p className="text-sm font-semibold text-white">Successfully uploaded</p>
-                      <p className="text-xs text-foreground-secondary">Opening document viewer...</p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
             {/* Action Buttons */}
-            {uploadStatus === 'idle' && (
+            {!isUploading ? (
               <div className="flex gap-4">
                 <button
                   onClick={handleUpload}
@@ -272,6 +195,14 @@ export default function UploadPage() {
                 >
                   Choose Different
                 </button>
+              </div>
+            ) : (
+              <div className="glass p-4 rounded-lg border border-white/20 flex items-center gap-3">
+                <Loader size={20} className="text-white flex-shrink-0 animate-spin" />
+                <div>
+                  <p className="text-sm font-semibold text-white">Uploading your document...</p>
+                  <p className="text-xs text-foreground-secondary">You'll be redirected to the viewer shortly</p>
+                </div>
               </div>
             )}
           </div>

@@ -9,7 +9,7 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
-  sources?:{textSnippet?:string; score?:number; pageNumber?: number}[];
+  sources?: { textSnippet?: string; score?: number; pageNumber?: number; filename?: string | null }[];
 }
 
 interface ChatSidebarProps {
@@ -17,7 +17,8 @@ interface ChatSidebarProps {
   onUploadClick?: () => void;
   isCollapsed?: boolean;
   onCollapsedChange?: (collapsed: boolean) => void;
-  onCitationClick: (page: number) => void
+  onCitationClick: (page: number) => void;
+  isFullScreen?: boolean;
 }
 
 export default function ChatSidebar({
@@ -25,7 +26,8 @@ export default function ChatSidebar({
   onUploadClick,
   isCollapsed = false,
   onCollapsedChange,
-  onCitationClick
+  onCitationClick,
+  isFullScreen = false
 }: ChatSidebarProps) {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -50,9 +52,12 @@ export default function ChatSidebar({
           id: msg._id,
           role: msg.role,
           content: msg.content,
-          timestamp: new Date(msg.createdAt)
+          timestamp: new Date(msg.createdAt),
+          sources: msg.sources || []
         }));
-        setMessages(formatted);
+        if (formatted.length > 0) {
+          setMessages(formatted);
+        }
       } catch (error) {
         console.error("Failed to load history");
       }
@@ -71,7 +76,7 @@ export default function ChatSidebar({
 
     const currentQuery = inputValue;
     setIsTyping(true);
-    
+
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
@@ -83,24 +88,21 @@ export default function ChatSidebar({
 
     try {
 
-      const results = await docsService.searchDocument(currentQuery, docId);
-      let aiResponseContent = "";
-
-      if (results && results.length > 0) {
-        aiResponseContent = "Here are the most relevant sections I found:\n\n";
-        results.forEach((item: any) => {
-          aiResponseContent += `Source:${item.filename} (Match: ${Math.round(item.score * 100)}%)\n"${item.text.substring(0, 150)}..."\n\n `;
-        });
-
-      } else {
-        aiResponseContent = "I couldn't find any relevant information in your documents.";
-      }
+      const data = await docsService.searchDocument(currentQuery, docId);
+      
+      const aiResponseContent = data.answer || "I couldn't find any relevant information in your documents.";
+      const sources = data.sources || [];
 
       const aiMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
         content: aiResponseContent,
         timestamp: new Date(),
+        sources: sources.map((item: any) => ({
+          textSnippet: item.textSnippet,
+          score: item.score,
+          pageNumber: item.pageNumber || 1
+        }))
       };
 
       setMessages((prev) => [...prev, aiMessage]);
@@ -139,21 +141,13 @@ export default function ChatSidebar({
         >
           <Menu size={20} />
         </button>
-        <button
-          onClick={onUploadClick}
-          className="p-2 hover:glass rounded-lg text-white/70 hover:text-white transition-all"
-          title="Upload Document"
-        >
-          <Plus size={20} />
-        </button>
       </div>
     );
   }
 
   return (
-    /* Flush left edge — no border-radius on the panel itself */
     <div
-      className="w-full sm:w-80 h-screen glass-dark border-r flex flex-col"
+      className="w-full h-full glass-dark border-r flex flex-col"
       style={{ borderColor: 'rgba(255, 255, 255, 0.08)', borderRadius: 0 }}
     >
       {/* Header */}
@@ -166,18 +160,6 @@ export default function ChatSidebar({
           <X size={18} />
         </button>
       </div>
-
-      {/* Upload Button */}
-      <div className="px-4 pt-4 pb-2">
-        <button
-          onClick={onUploadClick}
-          className="w-full flex items-center justify-center gap-2 py-2 px-4 rounded-lg bg-white text-black font-semibold hover:bg-white/90 hover:shadow-lg hover:shadow-white/10 transition-all duration-200"
-        >
-          <Plus size={18} />
-          <span>New Document</span>
-        </button>
-      </div>
-
       {/* Messages Container */}
       <div
         ref={scrollRef}
@@ -208,6 +190,35 @@ export default function ChatSidebar({
               <p className="text-xs text-foreground-tertiary mt-1">
                 {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </p>
+
+              {message.sources && message.sources.length > 0 && (
+                <div className='mt-3 space-y-1 border-t border-white/10 pt-2'>
+                  <span className='text-xs text-gray-400 font-semibold uppercase'>Sources:</span>
+
+                  {message.sources?.map((source, i) => {
+                    const isOtherFile = source.filename && source.filename !== docId;
+                    return (
+                      <div key={i} className="flex flex-col gap-0.5">
+                        {isOtherFile && (
+                          <span className="text-xs text-amber-400/80 font-medium">
+                            📄 {source.filename}
+                          </span>
+                        )}
+                        <button
+                          onClick={() => !isOtherFile && onCitationClick(source.pageNumber || 1)}
+                          className={`text-xs underline block text-left ${
+                            isOtherFile
+                              ? 'text-amber-400/60 cursor-default no-underline'
+                              : 'text-blue-400 hover:text-blue-300'
+                          }`}
+                        >
+                          {isOtherFile ? `Page ${source.pageNumber || '?'} (other document)` : `Jump to Page ${source.pageNumber || 1}`}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             {/* User avatar */}
@@ -216,16 +227,6 @@ export default function ChatSidebar({
                 <div className="w-2 h-2 rounded-full bg-white/80" />
               </div>
             )}
-
-            {message.sources?.map((source, i) => (
-              <button
-                key={i}
-                onClick={() => onCitationClick(source.pageNumber || 1)}
-                className="text-xs text-blue-400 underline hover:text-blue-300 block mt-1"
-              >
-                Jump to Page {source.pageNumber || 1}
-              </button>
-            ))}
           </div>
         ))}
 
@@ -256,7 +257,7 @@ export default function ChatSidebar({
             className="w-full px-4 py-2 rounded-lg glass-dark text-foreground placeholder-gray-600 focus-glow transition-all resize-none"
           />
           {inputValue && (
-            <div className="text-xs text-foreground-tertiary mt-1">{inputValue.length} characters</div>
+            <div className="text-xs text-foreground-tertiary mt-1">~{Math.ceil(inputValue.split(/\s+/).filter(Boolean).length * 1.3)} tokens</div>
           )}
         </div>
 

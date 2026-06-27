@@ -17,17 +17,12 @@ const storage= multer.diskStorage({
     }
 });
 
-const fileFilter=(req: any, file: Express.Multer.File, cb: multer.FileFilterCallback)=>{
-
-    const allowedTypes=[
-        'application/pdf'
-       
-    ];
-
-    if (allowedTypes.includes(file.mimetype)) {
+const fileFilter = (req: any, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
+    // Windows browsers sometimes send different mime types or empty
+    if (file.mimetype === 'application/pdf' || file.originalname.toLowerCase().endsWith('.pdf')) {
         cb(null, true);
-    }else{
-        cb(new Error('only PDF files are allowed!'))
+    } else {
+        cb(new Error('only PDF files are allowed!'));
     }
 };
 
