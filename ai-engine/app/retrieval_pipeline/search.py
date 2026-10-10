@@ -17,6 +17,7 @@
 # ══════════════════════════════════════════════════════════════════════════════
 
 import os
+import asyncio
 from app.core.database import index
 from app.core.vectorizer import VectorBrain
 from app.core.config import config
@@ -36,7 +37,7 @@ def _is_broad_query(query_text: str) -> bool:
     return any(kw in q for kw in _BROAD_KEYWORDS)
 
 
-def smart_search(query_text: str, brain: VectorBrain, active_filename: str = None, user_id: str = None, top_k: int = 5):
+async def smart_search(query_text: str, brain: VectorBrain, active_filename: str = None, user_id: str = None, top_k: int = 5):
     """
     Unified search entry point.
     Uses collapsed-tree search with level-aware scoring.
@@ -45,19 +46,13 @@ def smart_search(query_text: str, brain: VectorBrain, active_filename: str = Non
     """
     query_vector = brain.convert_batch([query_text])[0]
 
-    search_filter = None
-    if user_id:
-        search_filter = {"user_id": {"$eq": user_id}}
-    elif active_filename:
-        # Fallback for old documents that don't have user_id
-        search_filter = {"filename": {"$eq": active_filename}}
-
     # Over-fetch 3× so we have room to re-rank meaningfully
-    search_response = index.query(
+    search_response = await asyncio.to_thread(
+        index.query,
         vector=query_vector,
         top_k=top_k * 3,
         include_metadata=True,
-        filter=search_filter
+        namespace=user_id or ""
     )
 
     matches = search_response['matches']
@@ -85,15 +80,34 @@ def smart_search(query_text: str, brain: VectorBrain, active_filename: str = Non
     matches.sort(key=lambda m: m['adjusted_score'], reverse=True)
 
     results = []
-    for match in matches[:top_k]:
+    seen_parents = set()
+    
+    for match in matches:
+        meta = match['metadata']
+        parent_id = meta.get('parent_id')
+        
+        # If this chunk belongs to a parent we've already included, skip it
+        # to avoid flooding the LLM context with duplicate large blocks.
+        if parent_id:
+            if parent_id in seen_parents:
+                continue
+            seen_parents.add(parent_id)
+
+        # Use parent_text if available (Small-to-Big retrieval), otherwise fallback to the chunk text
+        final_text = meta.get('parent_text') or meta.get('text', '')
+
         results.append({
             "score": match['adjusted_score'],
-            "text": match['metadata']['text'],
-            "level": match['metadata'].get('level', 0),
-            "page": match['metadata'].get('page_number', 'N/A'),
-            "is_summary": match['metadata'].get('is_summary', False),
-            "filename": match['metadata'].get('filename', 'Unknown')
+            "text": final_text,
+            "level": meta.get('level', 0),
+            "page": meta.get('page_number', 'N/A'),
+            "is_summary": meta.get('is_summary', False),
+            "filename": meta.get('filename', 'Unknown')
         })
+        
+        # Stop once we have enough unique results
+        if len(results) >= top_k:
+            break
 
     return results
 

@@ -111,9 +111,21 @@ html {
   50% { box-shadow: 0 0 30px rgba(255, 255, 255, 0.14); }
 }
 
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
 .animate-fadeInUp { animation: fadeInUp 0.5s ease-out forwards; }
 .animate-float { animation: float 3s ease-in-out infinite; }
 .animate-glowPulse { animation: glowPulse 2s ease-in-out infinite; }
+.animate-slideInLeft { animation: slideInLeft 0.3s ease-out forwards; }
+.animate-slideInRight { animation: slideInRight 0.3s ease-out forwards; }
 
 /* Staggered animations */
 .stagger-1 { animation-delay: 0.1s; }

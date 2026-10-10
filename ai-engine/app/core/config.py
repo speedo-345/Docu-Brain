@@ -5,7 +5,7 @@ load_dotenv()
 
 class Config:
 
-    MODEL_PROVIDER=os.getenv("MODEL_PROVIDER", "groq")
+    MODEL_PROVIDER=os.getenv("MODEL_PROVIDER", "gemini")
 
     # ── Ollama (local) ──
     # WHY COMMENTED OUT AS DEFAULT:
@@ -28,6 +28,11 @@ class Config:
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
     GROQ_MODEL = os.getenv("GROQ_MODEL", "llama3-8b-8192")
     PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "docubrain-index")
+
+    # ── Neo4j Graph Database ──
+    NEO4J_URI = os.getenv("NEO4J_URI")
+    NEO4J_USERNAME = os.getenv("NEO4J_USERNAME", "neo4j")
+    NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD")
 
     EMBEDDING_MODEL = "all-MiniLM-L6-v2"
     EMBEDDING_DIMENSION = 384

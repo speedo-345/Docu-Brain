@@ -1,8 +1,12 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Send, Plus, Menu, X } from 'lucide-react';
+import { Send, Plus, Menu, X, Mic, MicOff, Volume2, VolumeX } from 'lucide-react';
 import { docsService } from '@/services/docsService';
+import ChatChart, { ChartPayload } from './ChatChart';
+import DebatePanel, { DebateData } from './DebatePanel';
+import { useVoiceInput } from '@/hooks/useVoiceInput';
+import { useVoiceOutput } from '@/hooks/useVoiceOutput';
 
 interface Message {
   id: string;
@@ -10,6 +14,8 @@ interface Message {
   content: string;
   timestamp: Date;
   sources?: { textSnippet?: string; score?: number; pageNumber?: number; filename?: string | null }[];
+  chart?: ChartPayload;
+  debate?: DebateData;
 }
 
 interface ChatSidebarProps {
@@ -40,6 +46,27 @@ export default function ChatSidebar({
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const voiceTriggeredRef = useRef(false);
+  const fullAnswerRef = useRef('');
+
+  // Voice hooks
+  const { isListening, transcript, startListening, stopListening, isSupported: micSupported } = useVoiceInput();
+  const { isSpeaking, speak, stop: stopSpeaking, isSupported: ttsSupported } = useVoiceOutput();
+
+  // When voice transcript updates, fill the input
+  useEffect(() => {
+    if (transcript) {
+      setInputValue(transcript);
+    }
+  }, [transcript]);
+
+  // When voice stops listening and there's a transcript, auto-send
+  useEffect(() => {
+    if (!isListening && voiceTriggeredRef.current && inputValue.trim()) {
+      voiceTriggeredRef.current = false;
+      handleSendMessage(true);
+    }
+  }, [isListening]);
 
   useEffect(() => {
     if (!docId) return;
@@ -71,11 +98,12 @@ export default function ChatSidebar({
     }
   }, [messages]);
 
-  const handleSendMessage = async () => {
+  const handleSendMessage = async (isVoice: boolean = false) => {
     if (!inputValue.trim() || isTyping) return;
 
     const currentQuery = inputValue;
     setIsTyping(true);
+    fullAnswerRef.current = '';
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -83,29 +111,72 @@ export default function ChatSidebar({
       content: inputValue,
       timestamp: new Date(),
     };
-    setMessages((prev) => [...prev, userMessage]);
+    const aiMessageId = (Date.now() + 1).toString();
+    const initialAiMessage: Message = {
+      id: aiMessageId,
+      role: 'assistant',
+      content: "",
+      timestamp: new Date(),
+      sources: []
+    };
+
+    setMessages((prev) => [...prev, userMessage, initialAiMessage]);
     setInputValue('');
 
     try {
+      // Build history for context (excluding the new user message)
+      const history = messages
+        .filter(m => m.id !== '1' && m.id !== userMessage.id && m.id !== aiMessageId) // remove welcome msg
+        .map(m => ({ role: m.role, content: m.content }));
 
-      const data = await docsService.searchDocument(currentQuery, docId);
-      
-      const aiResponseContent = data.answer || "I couldn't find any relevant information in your documents.";
-      const sources = data.sources || [];
-
-      const aiMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: aiResponseContent,
-        timestamp: new Date(),
-        sources: sources.map((item: any) => ({
-          textSnippet: item.textSnippet,
-          score: item.score,
-          pageNumber: item.pageNumber || 1
-        }))
-      };
-
-      setMessages((prev) => [...prev, aiMessage]);
+      await docsService.searchDocument(
+        currentQuery, 
+        docId,
+        history,
+        (chunk) => {
+            fullAnswerRef.current += chunk;
+            setMessages(prev => prev.map(m => 
+                m.id === aiMessageId 
+                    ? { ...m, content: m.content + chunk } 
+                    : m
+            ));
+        },
+        (sources) => {
+            setMessages(prev => prev.map(m => 
+                m.id === aiMessageId 
+                    ? { ...m, sources: sources.map((item: any) => ({
+                        textSnippet: item.textSnippet,
+                        score: item.score,
+                        pageNumber: item.pageNumber || 1,
+                        filename: item.filename
+                    })) } 
+                    : m
+            ));
+        },
+        (chartData) => {
+            setMessages(prev => prev.map(m =>
+                m.id === aiMessageId
+                    ? { ...m, chart: chartData }
+                    : m
+            ));
+        },
+        (debateType, debateData) => {
+            setMessages(prev => prev.map(m => {
+                if (m.id !== aiMessageId) return m;
+                const currentDebate = m.debate || { advocate: '', critic: '', verdict: '', status: '' };
+                if (debateType === 'debate_advocate') {
+                    return { ...m, debate: { ...currentDebate, advocate: debateData } };
+                } else if (debateType === 'debate_critic') {
+                    return { ...m, debate: { ...currentDebate, critic: debateData } };
+                } else if (debateType === 'debate_verdict') {
+                    return { ...m, debate: { ...currentDebate, verdict: currentDebate.verdict + debateData } };
+                } else if (debateType === 'debate_status') {
+                    return { ...m, debate: { ...currentDebate, status: debateData } };
+                }
+                return m;
+            }));
+        }
+      );
 
     } catch (error) {
       console.error("Search failed: ", error);
@@ -118,6 +189,10 @@ export default function ChatSidebar({
       setMessages((prev) => [...prev, errorMessage]);
     } finally {
       setIsTyping(false);
+      // Voice-out: speak the answer if this was a voice query
+      if (isVoice && ttsSupported && fullAnswerRef.current) {
+        speak(fullAnswerRef.current);
+      }
     }
   };
 
@@ -169,7 +244,7 @@ export default function ChatSidebar({
         {messages.map((message, index) => (
           <div
             key={message.id}
-            className={`flex gap-3 animate-slideInLeft stagger-${(index % 4) + 1}`}
+            className={`flex gap-3 ${message.role === 'user' ? 'animate-slideInRight' : 'animate-slideInLeft'} stagger-${(index % 4) + 1}`}
             style={{ justifyContent: message.role === 'user' ? 'flex-end' : 'flex-start' }}
           >
             {/* Assistant avatar */}
@@ -187,6 +262,17 @@ export default function ChatSidebar({
                 }`}
             >
               <p className="text-sm text-foreground">{message.content}</p>
+
+              {/* Generative UI: Chart */}
+              {message.chart && (
+                <ChatChart data={message.chart} />
+              )}
+
+              {/* Multi-Agent Debate */}
+              {message.debate && (
+                <DebatePanel data={message.debate} />
+              )}
+
               <p className="text-xs text-foreground-tertiary mt-1">
                 {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </p>
@@ -261,14 +347,48 @@ export default function ChatSidebar({
           )}
         </div>
 
+        <div className="flex gap-2">
         <button
           onClick={handleSendMessage}
           disabled={!inputValue.trim() || isTyping}
-          className="w-full flex items-center justify-center gap-2 py-2 px-4 rounded-lg bg-white text-black font-semibold hover:bg-white/90 hover:shadow-lg hover:shadow-white/10 transition-all duration-200 disabled:opacity-30 disabled:hover:bg-white"
+          className="flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-lg bg-white text-black font-semibold hover:bg-white/90 hover:shadow-lg hover:shadow-white/10 transition-all duration-200 disabled:opacity-30 disabled:hover:bg-white"
         >
           <Send size={18} />
           <span>Send</span>
         </button>
+
+        {/* Voice Controls */}
+        {micSupported && (
+          <button
+            onClick={() => {
+              if (isListening) {
+                stopListening();
+              } else {
+                voiceTriggeredRef.current = true;
+                startListening();
+              }
+            }}
+            className={`p-2 rounded-lg transition-all duration-200 ${
+              isListening
+                ? 'bg-red-500/20 text-red-400 animate-pulse border border-red-500/30'
+                : 'glass text-white/60 hover:text-white'
+            }`}
+            title={isListening ? 'Stop listening' : 'Voice input'}
+          >
+            {isListening ? <MicOff size={18} /> : <Mic size={18} />}
+          </button>
+        )}
+
+        {ttsSupported && isSpeaking && (
+          <button
+            onClick={stopSpeaking}
+            className="p-2 rounded-lg glass text-amber-400 animate-pulse border border-amber-500/20"
+            title="Stop speaking"
+          >
+            <VolumeX size={18} />
+          </button>
+        )}
+        </div>
       </div>
     </div>
   );

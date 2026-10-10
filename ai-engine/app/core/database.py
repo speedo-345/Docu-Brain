@@ -1,6 +1,7 @@
 
 import uuid
 import numpy as np
+import asyncio
 from pinecone import Pinecone, ServerlessSpec#Pinecone handles the scaling for you; it's faster to set up and usually much cheaper
 
 from app.core.config import config
@@ -45,7 +46,7 @@ def assign_chunk_ids(filename: str, chunks: list):
     return chunks
 
 
-def upsert_vectors(filename: str, chunks: list, vectors: list, user_id: str = None):
+async def upsert_vectors(filename: str, chunks: list, vectors: list, user_id: str = None):
     
 
     print(f"[*] Uploading {len(vectors)} vectors to Pinecone...")  
@@ -81,7 +82,7 @@ def upsert_vectors(filename: str, chunks: list, vectors: list, user_id: str = No
         # Pinecone fails if given > 1000 items at once. Wrap in safe batches
         batch_size = 100
         for i in range(0, len(upsert_data), batch_size):
-            index.upsert(vectors=upsert_data[i:i+batch_size])
+            await asyncio.to_thread(index.upsert, vectors=upsert_data[i:i+batch_size], namespace=user_id or "")
             
         print("✅ Upload Successful!")
         return True    
@@ -150,12 +151,14 @@ def cosine_similarity(vec_a, vec_b):
     return float(dot / norm)
 
 
-def delete_vectors(filename: str):
+async def delete_vectors(filename: str, user_id: str = None):
     try:
-        index.delete(
+        await asyncio.to_thread(
+            index.delete,
             filter={
                 "filename": {"$eq":filename}
-            }
+            },
+            namespace=user_id or ""
         )    
         print("✅ Pinecone cleanup successful")
         return True

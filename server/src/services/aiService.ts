@@ -21,7 +21,7 @@ export const sendFileToAI = async (filePath: string, filename: string, userId: s
             },
             maxContentLength: Infinity,//prevents axios from blocking the big files
             maxBodyLength: Infinity,
-            timeout: 600000 // 10 minutes — parsing large PDFs with Docling can be slow
+            timeout: 30000 // 30 seconds — parsing is now near-instantaneous
         });
         return response.data;
     } catch (error) {
@@ -39,7 +39,8 @@ export const searchAI = async (queryText: string, filename: string, userId: stri
         history: history,
         top_k: 7
     }, {
-        timeout: 240000 // 4 minutes — Ollama may need to cold-load the model
+        timeout: 30000, // 30 seconds
+        responseType: 'stream'
     });
     return response.data;
 };
@@ -52,11 +53,12 @@ export const getProcessingStatus = async (filename: string) => {
     return response.data;
 };
 
-export const deleteFileFromAI=async(filename:string)=>{
-    try{
+export const deleteFileFromAI = async (filename: string, userId: string) => {
+    try {
         const PYTHON_URL = process.env.PYTHON_URI;
-        await axios.post(`${PYTHON_URL}/delete`,{
-            filename: filename
+        await axios.post(`${PYTHON_URL}/delete`, {
+            filename: filename,
+            user_id: userId
         })
         return true;
     }catch(error){

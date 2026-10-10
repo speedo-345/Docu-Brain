@@ -29,33 +29,54 @@ class VectorBrain:
 
     def split_documents(self, documents):
         """
-        Split LangChain Documents into smaller chunks suitable for embedding.
-
-        NOTE: We use ONLY RecursiveCharacterTextSplitter here.
-        A MarkdownHeaderTextSplitter was previously used as a first pass, but pypdf
-        outputs plain text (not Markdown) with no # headers to split on.
-        It would produce one giant chunk per page and then RecursiveCharacterTextSplitter
-        would still need to do all the real work anyway — making it a useless step.
+        Implements Small-to-Big (Parent-Child) chunking.
+        Documents are split into large Parent chunks (for LLM context).
+        Parents are then split into small Child chunks (for accurate retrieval).
+        The child chunk holds the parent's text in its metadata.
         """
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=config.CHUNK_SIZE,
-            chunk_overlap=config.CHUNK_OVERLAP,
+        import uuid
+        parent_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=2000,
+            chunk_overlap=200,
             separators=["\n\n\n", "\n\n", "\n", ". ", " ", ""]
         )
+        
+        child_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=400,
+            chunk_overlap=50,
+            separators=["\n\n", "\n", ". ", " ", ""]
+        )
 
-        final_chunks = []
+        final_child_chunks = []
         for doc in documents:
             page_val = doc.metadata.get("page_number", 1)
-            sub_splits = text_splitter.split_text(doc.page_content)
+            
+            # 1. Split into large parent chunks
+            parent_splits = parent_splitter.split_text(doc.page_content)
+            
+            for parent_text in parent_splits:
+                if not parent_text.strip():
+                    continue
+                    
+                parent_id = f"parent_{uuid.uuid4().hex[:8]}"
+                
+                # 2. Split parent into small child chunks
+                child_splits = child_splitter.split_text(parent_text)
+                
+                for child_text in child_splits:
+                    if child_text.strip():
+                        # We store the parent text right in the child's metadata 
+                        # so we don't need a separate DB for retrieval!
+                        final_child_chunks.append({
+                            "text": child_text.strip(),
+                            "metadata": {
+                                "page_number": page_val,
+                                "parent_id": parent_id,
+                                "parent_text": parent_text.strip()
+                            }
+                        })
 
-            for split_text in sub_splits:
-                if split_text.strip():
-                    final_chunks.append({
-                        "text": split_text.strip(),
-                        "metadata": {"page_number": page_val}
-                    })
-
-        return final_chunks
+        return final_child_chunks
 
 
     def convert_batch(self, texts: list):

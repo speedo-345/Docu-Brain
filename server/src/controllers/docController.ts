@@ -181,38 +181,63 @@ export const searchDocument = async (req: AuthRequest, res: Response): Promise<v
             content: msg.content
         }));
 
-        const searchData = await searchAI(query.toString(), doc.filename, req.user._id.toString(), history);
+        const searchStream = await searchAI(query.toString(), doc.filename, req.user._id.toString(), history);
 
-        if (searchData && searchData.error) {
-            throw new Error(searchData.error);
-        }
+        // Set up SSE headers
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
 
-        const results = searchData.results || [];
+        let fullAnswer = "";
+        let sources: any[] = [];
 
-        let aiResponseContent= searchData.answer || "I couldn't find relevant info.";
-        let sources:any[]=[];
-
-        //sources for db
-        if(results && results.length>0){
-
-            sources= results.map((r:any)=>({
-                textSnippet:r.text.substring(0, 100),
-                score: r.score,
-                pageNumber: typeof r.page === 'number' ? r.page : (!isNaN(parseInt(r.page)) ? parseInt(r.page) : 1),
-                filename: r.filename || null
-            }));
-        }
-
-        const aiMessage= await Message.create({
-            documentId: docId,
-            role: 'assistant',
-            content: aiResponseContent,
-            sources: sources
+        searchStream.on('data', (chunk: Buffer) => {
+            const chunkStr = chunk.toString();
+            const lines = chunkStr.split('\n\n');
+            
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const parsed = JSON.parse(line.slice(6));
+                        if (parsed.type === 'token') {
+                            fullAnswer += parsed.data;
+                        } else if (parsed.type === 'results') {
+                            sources = parsed.data;
+                        }
+                    } catch (e) {
+                        // ignore parse errors for partial chunks
+                    }
+                }
+            }
+            // Pipe the raw stream chunk directly to the client
+            res.write(chunkStr);
         });
 
-        res.json({
-            answer: aiResponseContent,
-            sources: sources
+        searchStream.on('end', async () => {
+            // Save the complete message to MongoDB when the stream finishes
+            let formattedSources: any[] = [];
+            if (sources && sources.length > 0) {
+                formattedSources = sources.map((r: any) => ({
+                    textSnippet: r.text.substring(0, 100),
+                    score: r.score,
+                    pageNumber: typeof r.page === 'number' ? r.page : (!isNaN(parseInt(r.page)) ? parseInt(r.page) : 1),
+                    filename: r.filename || null
+                }));
+            }
+
+            await Message.create({
+                documentId: docId,
+                role: 'assistant',
+                content: fullAnswer,
+                sources: formattedSources
+            });
+            
+            res.end();
+        });
+
+        searchStream.on('error', (err: any) => {
+            console.error("Stream Error:", err);
+            res.end();
         });
       
 
@@ -291,7 +316,7 @@ export const deleteDocument=async(req:AuthRequest, res: Response)=>{
         }
 
         // ── Delete vectors from Pinecone (surface failures) ──
-        const aiDeleted = await deleteFileFromAI(docExist.filename);
+        const aiDeleted = await deleteFileFromAI(docExist.filename, userId.toString());
         if (aiDeleted === false) {
             console.warn("⚠️ Pinecone vector cleanup failed — vectors may be orphaned for:", docExist.filename);
         }

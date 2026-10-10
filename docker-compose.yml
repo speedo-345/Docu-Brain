@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  # Next.js Frontend
+  client:
+    build: 
+      context: ./client
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://server:5000/api
+    depends_on:
+      - server
+    networks:
+      - docubrain-net
+
+  # Express.js Backend
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      - PORT=5000
+      - MONGODB_URI=${MONGODB_URI}
+      - JWT_SECRET=${JWT_SECRET}
+      - PYTHON_URI=http://ai-engine:8000
+    depends_on:
+      - ai-engine
+    networks:
+      - docubrain-net
+
+  # FastAPI AI Engine
+  ai-engine:
+    build:
+      context: ./ai-engine
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - PINECONE_API_KEY=${PINECONE_API_KEY}
+      - PINECONE_INDEX_NAME=${PINECONE_INDEX_NAME}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - MODEL_PROVIDER=gemini
+    networks:
+      - docubrain-net
+
+networks:
+  docubrain-net:
+    driver: bridge
