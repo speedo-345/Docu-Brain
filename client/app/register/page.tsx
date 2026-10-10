@@ -36,6 +36,7 @@ export default function RegisterPage() {
     }finally{
       setIsLoading(false);
     }
+  }
 
   return (
     <div className="relative min-h-screen w-full overflow-hidden flex items-center justify-center">
